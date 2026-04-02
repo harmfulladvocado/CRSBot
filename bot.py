@@ -1,13 +1,39 @@
 import re
 import asyncio
 import os
-from datetime import datetime
+import io
+from pathlib import Path
+from datetime import datetime, timezone
 from typing import Optional
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
+
+def load_local_env() -> None:
+	#Load key=value pairs from a local .env file if present.
+	env_path = Path(__file__).with_name(".env")
+	if not env_path.exists():
+		return
+
+	for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+		line = raw_line.strip()
+		if not line or line.startswith("#") or "=" not in line:
+			continue
+
+		key, value = line.split("=", 1)
+		key = key.strip()
+		value = value.strip()
+
+		if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+			value = value[1:-1]
+
+		if key:
+			os.environ.setdefault(key, value)
+
+
+load_local_env()
 TOKEN = os.getenv("DISCORD_BOT_TOKEN", "")
 
 GUILD_ID = 1337503536371728406
@@ -15,32 +41,33 @@ LOG_CHANNEL_ID = 1346833175762173962
 TICKET_CATEGORY_ID = 1337503537286090875
 SUPPORT_STAFF_ROLE_ID = 1346814062692012083
 BLACKLIST_ROLE_ID = 1430510098123587604
+IP_REPLY_CATEGORY_ID = 1337503537004806335
+TRANSCRIPT_CHANNEL_ID = 1350552425194324080
 
+# Channels and categories in these lists will be ignored for logging
 EXCLUDED_CHANNEL_IDS = {
 	1346833175762173962,
 	1350552425194324080,
 	1350141246227742901,
 	1337503537508384770,
 }
+
+# Categories in these lists will be ignored for logging
 EXCLUDED_CATEGORY_IDS = {
 	1337503537286090875,
 	1346816194086309908,
 }
 
-ALLOWED_TICKET_TYPES = {
-	"discord issue",
-	"minecraft issue",
-	"bug report",
-	"player report",
-}
-
+# ticket types for dropdown selection
 TICKET_TYPE_OPTIONS = [
 	discord.SelectOption(label="Discord Issue", value="discord issue"),
 	discord.SelectOption(label="Minecraft Issue", value="minecraft issue"),
 	discord.SelectOption(label="Bug Report", value="bug report"),
 	discord.SelectOption(label="Player Report", value="player report"),
+	discord.SelectOption(label="Other", value="other"),
 ]
 
+# you can read this bro
 MAX_OPEN_TICKETS_PER_USER = 3
 
 
@@ -49,12 +76,12 @@ MAX_OPEN_TICKETS_PER_USER = 3
 # ============================================================================
 
 def ts() -> str:
-	return datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+	return f"<t:{int(datetime.now(timezone.utc).timestamp())}:F>"
 
 
 # Sanitizes user input into a valid Discord channel name
 def safe_channel_name(value: str) -> str:
-	"""Create a channel-safe name segment from user input."""
+	#Create a channel-safe name segment from user input.
 	cleaned = re.sub(r"[^a-z0-9-]", "-", value.lower())  # Replace invalid chars with dashes
 	cleaned = re.sub(r"-+", "-", cleaned).strip("-")  # Remove consecutive dashes and trim ends
 	return cleaned[:40] if cleaned else "ticket"  # Limit to 40 chars, fallback to "ticket"
@@ -93,22 +120,20 @@ def member_text(member: discord.Member) -> str:
 
 # Finds the next sequential ticket number for a user (001, 002, etc.)
 def next_ticket_number(guild: discord.Guild, user_part: str) -> int:
-	"""Find the next 3-digit ticket index for a user (001, 002, ...)."""
-	pattern = re.compile(rf"^{re.escape(user_part)}-(\d{{3}})$")  # Match username-###
+	pattern = re.compile(rf"^{re.escape(user_part)}-(\d{{3}})$")
 	max_found = 0
 
-	# Scan all text channels for highest existing number
 	for channel in guild.text_channels:
 		match = pattern.match(channel.name)
 		if match:
 			max_found = max(max_found, int(match.group(1)))
 
-	return max_found + 1  # Return next sequential number
+	return max_found + 1
 
 
 # Counts how many open tickets a user currently has
 def count_open_tickets(guild: discord.Guild, user_part: str) -> int:
-	"""Count current open ticket channels for a user in the ticket category."""
+	#Count current open ticket channels for a user in the ticket category."
 	category = guild.get_channel(TICKET_CATEGORY_ID)
 	if not isinstance(category, discord.CategoryChannel):
 		return 0
@@ -133,7 +158,6 @@ intents.message_content = True
 intents.moderation = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
-bot.tree = app_commands.CommandTree(bot)
 
 
 # ============================================================================
@@ -156,11 +180,65 @@ async def send_log(title: str, description: str) -> None:
 		title=title,
 		description=description,
 		color=discord.Color.blurple(),
-		timestamp=datetime.now(datetime.timezone.utc),
+		timestamp=datetime.now(timezone.utc),
 	)
 	# Add footer with guild ID and formatted timestamp
 	embed.set_footer(text=f"Guild ID: {GUILD_ID} | {ts()}")
 	await channel.send(embed=embed)
+
+
+async def send_ticket_transcript(ticket_channel: discord.TextChannel, closed_by: discord.abc.User) -> None:
+	"""Save full ticket transcript to the configured transcript channel."""
+	transcript_channel = ticket_channel.guild.get_channel(TRANSCRIPT_CHANNEL_ID)
+	if transcript_channel is None:
+		try:
+			transcript_channel = await ticket_channel.guild.fetch_channel(TRANSCRIPT_CHANNEL_ID)
+		except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+			return
+
+	if not isinstance(transcript_channel, (discord.TextChannel, discord.Thread)):
+		return
+
+	lines: list[str] = [
+		f"Ticket Channel: {ticket_channel.name} ({ticket_channel.id})",
+		f"Guild: {ticket_channel.guild.name} ({ticket_channel.guild.id})",
+		f"Closed By: {closed_by} ({closed_by.id})",
+		f"Closed At: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}",
+		"",
+	]
+
+	async for msg in ticket_channel.history(limit=None, oldest_first=True):
+		message_text = msg.content if msg.content else "<no text content>"
+		message_text = message_text.replace("\r\n", "\\n").replace("\n", "\\n")
+
+		if msg.attachments:
+			attachment_list = ", ".join(attachment.url for attachment in msg.attachments)
+			message_text += f" [Attachments: {attachment_list}]"
+
+		if msg.embeds:
+			embed_labels = []
+			for embed in msg.embeds:
+				embed_labels.append(embed.title or "<no title>")
+			message_text += f" [Embeds: {', '.join(embed_labels)}]"
+
+		timestamp_text = msg.created_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+		lines.append(f"{msg.author} - {message_text} - {timestamp_text}")
+
+	transcript_bytes = io.BytesIO("\n".join(lines).encode("utf-8"))
+	transcript_file = discord.File(
+		fp=transcript_bytes,
+		filename=f"transcript-{ticket_channel.name}-{int(datetime.now(timezone.utc).timestamp())}.txt",
+	)
+
+	await transcript_channel.send(
+		content=(
+			"Ticket transcript saved\n"
+			f"Channel: {ticket_channel.name} ({ticket_channel.id})\n"
+			f"Closed by: {closed_by} ({closed_by.id})\n"
+			f"Closed at: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}"
+		),
+		file=transcript_file,
+	)
 
 
 # ============================================================================
@@ -187,6 +265,14 @@ class CloseTicketConfirmView(discord.ui.View):
 		# Notify user and wait 5 seconds before deletion
 		await interaction.response.send_message("Ticket confirmed. Closing in 5 seconds...", ephemeral=True)
 		await channel.send(f"🔒 Ticket closed by {interaction.user.mention}. This channel will be deleted in 5 seconds.")
+		try:
+			await send_ticket_transcript(channel, interaction.user)
+		except Exception as error:
+			await channel.send("Failed to save transcript before close. Staff should check bot permissions for the transcript channel.")
+			await send_log(
+				"Ticket Transcript Error",
+				f"Failed to save transcript for {channel.mention} (`{channel.id}`): {error}",
+			)
 		await asyncio.sleep(5)
 		# Delete the ticket channel
 		await channel.delete(reason=f"Ticket closed by {interaction.user} ({interaction.user.id})")
@@ -415,16 +501,6 @@ async def create_ticket(
 		)
 		return
 
-	# Validate ticket type
-	normalized_type = ticket_type.strip().lower()
-	if normalized_type not in ALLOWED_TICKET_TYPES:
-		allowed_list = ", ".join(sorted(ALLOWED_TICKET_TYPES))
-		await interaction.response.send_message(
-			f"Invalid ticket type. Use one of: {allowed_list}",
-			ephemeral=True,
-		)
-		return
-
 	# Check if user has reached ticket limit
 	user_part = safe_channel_name(interaction.user.name)
 	open_count = count_open_tickets(guild, user_part)
@@ -472,7 +548,7 @@ async def create_ticket(
 	)
 
 	# Build the initial message
-	now_label = datetime.now().strftime("%H:%M")
+	opened_at = f"<t:{int(datetime.now(timezone.utc).timestamp())}:F>"
 	extra_lines = ""
 	if minecraft_username:
 		extra_lines += "Minecraft Username:\n"
@@ -490,7 +566,7 @@ async def create_ticket(
 		f"{extra_lines}"
 		"Reason:\n"
 		f"{reason}\n"
-		f"Thanks for being patient! - Today at {now_label}\n\n"
+		f"Thanks for being patient! - {opened_at}\n\n"
 		"If a staff member is not here yet, please wait a little while. "
 		"Our team will respond as soon as possible."
 	)
@@ -669,7 +745,7 @@ async def on_member_remove(member: discord.Member) -> None:
 	try:
 		async for entry in member.guild.audit_logs(limit=5, action=discord.AuditLogAction.kick):
 			if entry.target and entry.target.id == member.id:
-				age = datetime.now(datetime.timezone.utc) - entry.created_at
+				age = datetime.now(timezone.utc) - entry.created_at
 				if age.total_seconds() <= 10:  # Kick happened within last 10 seconds
 					kicked_by = entry.user
 				break
@@ -747,7 +823,7 @@ async def on_bulk_message_delete(messages: list[discord.Message]) -> None:
 async def on_guild_channel_pins_update(channel: discord.abc.GuildChannel, last_pin: Optional[datetime]) -> None:
 	if channel.guild.id != GUILD_ID or in_excluded_category(channel):
 		return
-	when = last_pin.strftime("%Y-%m-%d %H:%M:%S UTC") if last_pin else "Unknown"
+	when = f"<t:{int(last_pin.timestamp())}:F>" if last_pin else "Unknown"
 	await send_log("Message Pin", f"Pins updated in {channel.mention if hasattr(channel, 'mention') else channel}. Last pin: {when}")
 
 
@@ -766,6 +842,36 @@ async def on_message_edit(before: discord.Message, after: discord.Message) -> No
 		"Message Update",
 		f"Author: {after.author}\nChannel: {after.channel.mention}\nBefore: {before.content[:700]}\nAfter: {after.content[:700]}",
 	)
+
+
+# Auto-reply with server IP when users ask in the configured category
+@bot.event
+async def on_message(message: discord.Message) -> None:
+	if message.author.bot:
+		return
+
+	if message.guild is None or message.guild.id != GUILD_ID:
+		await bot.process_commands(message)
+		return
+
+	channel = message.channel
+	category_id = None
+	if isinstance(channel, discord.Thread):
+		parent = channel.parent
+		category_id = getattr(parent, "category_id", None) if parent else None
+	else:
+		category_id = getattr(channel, "category_id", None)
+
+	if category_id == IP_REPLY_CATEGORY_ID:
+		# Match standalone "ip" or "ip?" without triggering on words like "ship".
+		if re.search(r"(?:^|\s)ip(?:\?|)(?:\s|$)", message.content, flags=re.IGNORECASE):
+			await message.channel.send(
+				f"{message.author.mention} The IP is:\n"
+				"Bedrock    - CRSBox.bedrock.minehut.gg\n"
+				"Java       - CRSBox.minehut.gg"
+			)
+
+	await bot.process_commands(message)
 
 
 # When a role is created
