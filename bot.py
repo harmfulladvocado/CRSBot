@@ -868,7 +868,7 @@ async def on_message(message: discord.Message) -> None:
 			await message.channel.send(
 				f"{message.author.mention} The IP is:\n"
 				"Bedrock    - CRSBox.bedrock.minehut.gg\n"
-				"Java       - CRSBox.minehut.gg"
+				"Java           - CRSBox.minehut.gg"
 			)
 
 	await bot.process_commands(message)
