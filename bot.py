@@ -12,6 +12,7 @@ from discord.ext import commands
 
 
 def load_local_env() -> None:
+	#Load key=value pairs from a local .env file if present.
 	env_path = Path(__file__).with_name(".env")
 	if not env_path.exists():
 		return
@@ -43,6 +44,7 @@ BLACKLIST_ROLE_ID = 1430510098123587604
 IP_REPLY_CATEGORY_ID = 1337503537004806335
 TRANSCRIPT_CHANNEL_ID = 1350552425194324080
 
+# Channels and categories in these lists will be ignored for logging
 EXCLUDED_CHANNEL_IDS = {
 	1346833175762173962,
 	1350552425194324080,
@@ -50,11 +52,13 @@ EXCLUDED_CHANNEL_IDS = {
 	1337503537508384770,
 }
 
+# Categories in these lists will be ignored for logging
 EXCLUDED_CATEGORY_IDS = {
 	1337503537286090875,
 	1346816194086309908,
 }
 
+# ticket types for dropdown selection
 TICKET_TYPE_OPTIONS = [
 	discord.SelectOption(label="Discord Issue", value="discord issue"),
 	discord.SelectOption(label="Minecraft Issue", value="minecraft issue"),
@@ -63,6 +67,7 @@ TICKET_TYPE_OPTIONS = [
 	discord.SelectOption(label="Other", value="other"),
 ]
 
+# you can read this bro
 MAX_OPEN_TICKETS_PER_USER = 3
 
 
@@ -74,20 +79,25 @@ def ts() -> str:
 	return f"<t:{int(datetime.now(timezone.utc).timestamp())}:F>"
 
 
+# Sanitizes user input into a valid Discord channel name
 def safe_channel_name(value: str) -> str:
-	cleaned = re.sub(r"[^a-z0-9-]", "-", value.lower())
-	cleaned = re.sub(r"-+", "-", cleaned).strip("-")
-	return cleaned[:40] if cleaned else "ticket"
+	#Create a channel-safe name segment from user input.
+	cleaned = re.sub(r"[^a-z0-9-]", "-", value.lower())  # Replace invalid chars with dashes
+	cleaned = re.sub(r"-+", "-", cleaned).strip("-")  # Remove consecutive dashes and trim ends
+	return cleaned[:40] if cleaned else "ticket"  # Limit to 40 chars, fallback to "ticket"
 
 
+# Checks if a channel should be excluded from logging
 def in_excluded_category(channel: Optional[discord.abc.GuildChannel]) -> bool:
 	if channel is None:
 		return False
 
+	# Handle thread channels separately
 	if isinstance(channel, discord.Thread):
 		if channel.id in EXCLUDED_CHANNEL_IDS:
 			return True
 		parent = channel.parent
+		# Check parent channel and category
 		if parent and (
 			parent.id in EXCLUDED_CHANNEL_IDS
 			or getattr(parent, "category_id", None) in EXCLUDED_CATEGORY_IDS
@@ -95,6 +105,7 @@ def in_excluded_category(channel: Optional[discord.abc.GuildChannel]) -> bool:
 			return True
 		return False
 
+	# Check if channel or its category is in exclusion lists
 	return (
 		channel.id in EXCLUDED_CHANNEL_IDS
 		or channel.id in EXCLUDED_CATEGORY_IDS
@@ -102,10 +113,12 @@ def in_excluded_category(channel: Optional[discord.abc.GuildChannel]) -> bool:
 	)
 
 
+# Formats member info for logging (mention, name, ID)
 def member_text(member: discord.Member) -> str:
 	return f"{member.mention} ({member} | `{member.id}`)"
 
 
+# Finds the next sequential ticket number for a user (001, 002, etc.)
 def next_ticket_number(guild: discord.Guild, user_part: str) -> int:
 	pattern = re.compile(rf"^{re.escape(user_part)}-(\d{{3}})$")
 	max_found = 0
@@ -118,14 +131,21 @@ def next_ticket_number(guild: discord.Guild, user_part: str) -> int:
 	return max_found + 1
 
 
+# Counts how many open tickets a user currently has
 def count_open_tickets(guild: discord.Guild, user_part: str) -> int:
+	#Count current open ticket channels for a user in the ticket category."
 	category = guild.get_channel(TICKET_CATEGORY_ID)
 	if not isinstance(category, discord.CategoryChannel):
 		return 0
 
+	# Count matching channels in ticket category
 	pattern = re.compile(rf"^{re.escape(user_part)}-(\d{{3}})$")
 	return sum(1 for channel in category.text_channels if pattern.match(channel.name))
 
+
+# ============================================================================
+# BOT SETUP
+# ============================================================================
 
 intents = discord.Intents.default()
 intents.guilds = True
@@ -140,21 +160,29 @@ intents.moderation = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 
+# ============================================================================
+# LOGGING FUNCTIONS
+# ============================================================================
+
+# Sends a formatted log message to the log channel
 async def send_log(title: str, description: str) -> None:
 	guild = bot.get_guild(GUILD_ID)
 	if guild is None:
 		return
 
+	# Get the log channel
 	channel = guild.get_channel(LOG_CHANNEL_ID)
 	if channel is None or not isinstance(channel, discord.TextChannel):
 		return
 
+	# Create an embed with title, description, color and timestamp
 	embed = discord.Embed(
 		title=title,
 		description=description,
 		color=discord.Color.blurple(),
 		timestamp=datetime.now(timezone.utc),
 	)
+	# Add footer with guild ID and formatted timestamp
 	embed.set_footer(text=f"Guild ID: {GUILD_ID} | {ts()}")
 	await channel.send(embed=embed)
 
@@ -213,10 +241,16 @@ async def send_ticket_transcript(ticket_channel: discord.TextChannel, closed_by:
 	)
 
 
+# ============================================================================
+# TICKET UI COMPONENTS
+# ============================================================================
+
+# Confirmation dialog for closing a ticket
 class CloseTicketConfirmView(discord.ui.View):
 	def __init__(self):
 		super().__init__(timeout=60)
 
+	# Red "Confirm Close" button
 	@discord.ui.button(label="Confirm Close", style=discord.ButtonStyle.danger)
 	async def confirm_close(self, interaction: discord.Interaction, _: discord.ui.Button):
 		channel = interaction.channel
@@ -228,6 +262,7 @@ class CloseTicketConfirmView(discord.ui.View):
 			await interaction.response.send_message("This can only be used inside a ticket channel.", ephemeral=True)
 			return
 
+		# Notify user and wait 5 seconds before deletion
 		await interaction.response.send_message("Ticket confirmed. Closing in 5 seconds...", ephemeral=True)
 		await channel.send(f"🔒 Ticket closed by {interaction.user.mention}. This channel will be deleted in 5 seconds.")
 		try:
@@ -239,19 +274,24 @@ class CloseTicketConfirmView(discord.ui.View):
 				f"Failed to save transcript for {channel.mention} (`{channel.id}`): {error}",
 			)
 		await asyncio.sleep(5)
+		# Delete the ticket channel
 		await channel.delete(reason=f"Ticket closed by {interaction.user} ({interaction.user.id})")
 
+	# Gray "Cancel" button
 	@discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
 	async def cancel_close(self, interaction: discord.Interaction, _: discord.ui.Button):
 		await interaction.response.send_message("Close cancelled.", ephemeral=True)
 
 
+# Close button shown in ticket channels
 class CloseTicketView(discord.ui.View):
 	def __init__(self):
-		super().__init__(timeout=None)
+		super().__init__(timeout=None)  # Never timeout - persists across restarts
 
+	# Red "Close Ticket" button
 	@discord.ui.button(label="Close Ticket", style=discord.ButtonStyle.danger, custom_id="ticket:close")
 	async def close_ticket(self, interaction: discord.Interaction, _: discord.ui.Button):
+		# Show confirmation dialog
 		await interaction.response.send_message(
 			"Are you sure you want to close this ticket?",
 			view=CloseTicketConfirmView(),
@@ -259,6 +299,7 @@ class CloseTicketView(discord.ui.View):
 		)
 
 
+# Modal for general ticket creation (Discord/Bug issues)
 class TicketReasonModal(discord.ui.Modal, title="Create Ticket"):
 	reason = discord.ui.TextInput(
 		label="Reason",
@@ -273,6 +314,7 @@ class TicketReasonModal(discord.ui.Modal, title="Create Ticket"):
 		super().__init__()
 		self.ticket_type = ticket_type
 
+	# Called when user submits the modal
 	async def on_submit(self, interaction: discord.Interaction):
 		await create_ticket(
 			interaction=interaction,
