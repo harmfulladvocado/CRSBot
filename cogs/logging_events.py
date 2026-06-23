@@ -9,7 +9,7 @@ from typing import Optional
 import discord
 from discord.ext import commands
 
-from config import GUILD_ID, IP_REPLY_CATEGORY_ID
+from config import BOOST_ANNOUNCE_CHANNEL_ID, GUILD_ID, IP_REPLY_CATEGORY_ID
 from utils.helpers import in_excluded_category, member_text
 from utils.logging import send_log
 import re
@@ -190,6 +190,7 @@ class LoggingEvents(commands.Cog):
         # Check if member started/stopped boosting
         if before.premium_since is None and after.premium_since is not None:
             await send_log(self.bot, "Boost Create", f"{member_text(after)} started boosting the server.")
+            await self._announce_boost(after)
         elif before.premium_since is not None and after.premium_since is None:
             await send_log(self.bot, "Boost Delete", f"{member_text(after)} stopped boosting the server.")
 
@@ -207,6 +208,13 @@ class LoggingEvents(commands.Cog):
         # Check if roles, nickname, or avatar changed
         if before.roles != after.roles or before.nick != after.nick or before.avatar != after.avatar:
             await send_log(self.bot, "Member Update", f"Updated member profile/roles: {member_text(after)}")
+
+    async def _announce_boost(self, member: discord.Member) -> None:
+        """Post a public boost announcement to the configured channel."""
+        channel = member.guild.get_channel(BOOST_ANNOUNCE_CHANNEL_ID)
+        if channel is None or not isinstance(channel, (discord.TextChannel, discord.Thread)):
+            return
+        await channel.send(f"{member.mention} Just **boosted** the server!")
 
     # ------------------------------------------------------------------
     # Messages

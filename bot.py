@@ -47,6 +47,7 @@ INITIAL_COGS = (
     "cogs.tickets",
     "cogs.logging_events",
     "cogs.moderation",
+    "cogs.welcome",
 )
 
 # ============================================================================

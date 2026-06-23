@@ -19,6 +19,12 @@ BLACKLIST_ROLE_ID = 1430510098123587604
 IP_REPLY_CATEGORY_ID = 1337503537004806335
 TRANSCRIPT_CHANNEL_ID = 1350552425194324080
 
+# Role automatically given to new members when they join
+AUTO_JOIN_ROLE_ID = 1347534132602998834
+
+# Channel where boost announcements are posted
+BOOST_ANNOUNCE_CHANNEL_ID = 1340363691383849042
+
 # ============================================================================
 # LOGGING EXCLUSIONS
 # ============================================================================
