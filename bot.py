@@ -15,6 +15,7 @@ from discord.ext import commands
 
 from config import GUILD_ID
 from cogs.tickets import OpenTicketView, CloseTicketView
+from cogs.verification import VerifyView
 
 
 def load_local_env() -> None:
@@ -48,6 +49,7 @@ INITIAL_COGS = (
     "cogs.logging_events",
     "cogs.moderation",
     "cogs.welcome",
+    "cogs.verification",
 )
 
 # ============================================================================
@@ -80,7 +82,7 @@ async def setup_hook():
     # Add persistent views so ticket buttons survive bot restarts
     bot.add_view(OpenTicketView())
     bot.add_view(CloseTicketView())
-    bot.add_view(VerifyView()
+    bot.add_view(VerifyView())
 
     # Sync slash commands to the configured guild
     if GUILD_ID:
