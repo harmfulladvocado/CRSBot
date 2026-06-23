@@ -40,21 +40,3 @@ venv/bin/python bot.py
 All channel/role/category IDs and tunables (max open tickets, excluded
 channels, ticket type options) live in `config.py` — nothing else should
 hardcode an ID.
-
-## Notes on this refactor
-
-This is a reorganized version of the original single-file `bot.py`.
-Behavior is unchanged — every command, event listener, modal, and view
-works exactly as before. The only differences:
-
-- IDs and constants moved to `config.py`
-- Shared helpers moved to `utils/helpers.py`
-- `send_log` / `send_ticket_transcript` moved to `utils/logging.py` and now take
-  `bot` as an explicit argument instead of relying on a global `bot` variable
-- Event handlers, the ticket system, and the warn command are now separate cogs
-- `on_ready` stayed on `bot.py` instead of becoming a cog listener since
-  it has no dependencies and isn't worth moving
-
-You'll still want a real `requirements.txt` lock once you've run the bot
-and confirmed everything works — `venv/bin/pip freeze > requirements.txt`
-will capture exact installed versions.
