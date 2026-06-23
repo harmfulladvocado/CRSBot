@@ -80,6 +80,7 @@ async def setup_hook():
     # Add persistent views so ticket buttons survive bot restarts
     bot.add_view(OpenTicketView())
     bot.add_view(CloseTicketView())
+    bot.add_view(VerifyView()
 
     # Sync slash commands to the configured guild
     if GUILD_ID:
