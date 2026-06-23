@@ -25,7 +25,7 @@ class VerifyView(discord.ui.View):
         super().__init__(timeout=None)
 
     @discord.ui.button(
-        label="Click The Button To Verify Yourself!",
+        label="Verify",
         style=discord.ButtonStyle.success,
         custom_id="verify_button",
     )
