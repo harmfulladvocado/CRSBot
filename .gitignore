@@ -1,2 +1,14 @@
-# blocks the bot token
+# Secrets
 .env
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Logs
+*.log
+
+# OS
+.DS_Store
